@@ -23,62 +23,35 @@ def pull_and_publish(
     twitter_api = Api(consumer_key, consumer_secret, access_token, access_token_secret)
 
     slack_client = WebClient(slack_token)
-    channel_id = _get_channel_id(slack_client, slack_channel)
+    users_to_exclude = ['Ethereum_MXN', 'someOtherUser', 'someOtherUser2']
 
     since_id = None
     while True:
-        statuses = twitter_api.GetHomeTimeline(since_id=since_id)
+        #statuses = twitter_api.GetSearch(raw_query="q=-Precio%20(from%3Abitso)%20(to%3Abitso)%20(%40bitso)&src=typed_query&f=live")
+        statuses = twitter_api.GetSearch(raw_query="q=bitso%20&result_type=recent&since_id={}".format(since_id))
 
         if statuses:
             logger.info(f"Got {len(statuses)} statuses from Twitter.")
-            since_id = publish_new_statuses(
-                channel_id, since_id, slack_channel, slack_client, statuses
-            )
+            count = 0
+            publishable_statuses = set()
+            for status in reversed(statuses):
+                user = status.user
+                screen_name = user.screen_name
+                if any(u in screen_name for u in users_to_exclude):
+                    count += 1
+
+                else:
+                    twitter_link = f"http://twitter.com/{user.screen_name}/status/{status.id}"
+                    _publish(slack_channel, slack_client, twitter_link, user)
+
+                since_id = status.id
+
+            logger.info(f"Skipped {count} statuses from excluded users.")
+
         else:
             logger.info("No new twitter statuses.")
 
         time.sleep(wait_time)
-
-
-def _get_channel_id(slack_client: WebClient, slack_channel: str) -> str:
-    """Retrieves the corresponding channel ID to slack_channel."""
-    response = slack_client.conversations_list(limit=1000)
-    for channel in response["channels"]:
-        if channel.get("name") == slack_channel:
-            return channel.get("id")
-
-
-def publish_new_statuses(
-    channel_id: Optional[str],
-    since_id: Optional[int],
-    slack_channel: str,
-    slack_client: WebClient,
-    statuses: List[Status],
-) -> int:
-    """Publish statuses to slack if they aren't already in the channel."""
-    previous_links = set()
-
-    if channel_id is not None:
-        history = slack_client.channels_history(channel=channel_id, count=100)
-        for message in history.get("messages"):
-            previous_post = message.get("text")
-            link = previous_post.split("|")[0].strip("<>")
-            previous_links.add(link)
-
-    for status in reversed(statuses):
-        user = status.user
-        twitter_link = f"http://twitter.com/{user.screen_name}/status/{status.id}"
-        if twitter_link not in previous_links:
-            _publish(slack_channel, slack_client, twitter_link, user)
-
-        else:
-            logger.info(
-                f"Status from {user.name} already in '{slack_channel}', skipping slack post."
-            )
-
-        since_id = status.id
-
-    return since_id
 
 
 def _publish(
